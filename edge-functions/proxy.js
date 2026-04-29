@@ -28,7 +28,10 @@ function parseBackend(raw) {
 }
 
 const BACKEND = parseBackend(getEnv("BACKEND_URL"));
-const UPSTREAM_TIMEOUT_MS = Number(getEnv("UPSTREAM_TIMEOUT_MS") || "25000");
+const parsedTimeout = Number(getEnv("UPSTREAM_TIMEOUT_MS") || "25000");
+const UPSTREAM_TIMEOUT_MS = Number.isFinite(parsedTimeout) && parsedTimeout >= 1000
+  ? Math.min(parsedTimeout, 120000)
+  : 25000;
 const DEBUG_PROXY = getEnv("DEBUG_PROXY") === "1";
 
 if (!BACKEND) {
@@ -45,6 +48,7 @@ const HOP_BY_HOP_REQUEST_HEADERS = new Set([
   "proxy-authenticate",
   "proxy-authorization",
   "te",
+  "trailer",
   "trailers",
   "transfer-encoding",
   "keep-alive",
@@ -105,6 +109,14 @@ export default async (request) => {
   }
 
   const incomingURL = new URL(request.url);
+  const incomingHost = incomingURL.host.toLowerCase();
+  const backendHost = BACKEND.host.toLowerCase();
+  if (incomingHost === backendHost) {
+    return new Response("BACKEND_URL points to this same host (proxy loop)", {
+      status: 500,
+    });
+  }
+
   const upstreamURL = new URL(incomingURL.toString());
   upstreamURL.protocol = BACKEND.protocol || "https:";
   upstreamURL.hostname = BACKEND.hostname;

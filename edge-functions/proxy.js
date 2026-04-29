@@ -1,5 +1,19 @@
-const BACKEND_URL = Deno.env.get("BACKEND_URL");
-const UPSTREAM_TIMEOUT_MS = Number(Deno.env.get("UPSTREAM_TIMEOUT_MS") || "25000");
+const getEnv = (key) => {
+  try {
+    if (globalThis.Netlify?.env?.get) {
+      return globalThis.Netlify.env.get(key);
+    }
+  } catch (_) {}
+
+  try {
+    return Deno.env.get(key);
+  } catch (_) {
+    return undefined;
+  }
+};
+
+const BACKEND_URL = getEnv("BACKEND_URL");
+const UPSTREAM_TIMEOUT_MS = Number(getEnv("UPSTREAM_TIMEOUT_MS") || "25000");
 
 if (!BACKEND_URL) {
   console.warn("[proxy] BACKEND_URL is not set");

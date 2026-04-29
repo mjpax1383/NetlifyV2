@@ -12,12 +12,32 @@ const getEnv = (key) => {
   }
 };
 
-const BACKEND_URL = getEnv("BACKEND_URL");
-const UPSTREAM_TIMEOUT_MS = Number(getEnv("UPSTREAM_TIMEOUT_MS") || "25000");
+function parseBackend(raw) {
+  if (!raw) return null;
+  const value = raw.trim();
+  if (!value) return null;
 
-if (!BACKEND_URL) {
-  console.warn("[proxy] BACKEND_URL is not set");
+  try {
+    if (value.includes("://")) {
+      return new URL(value);
+    }
+    return new URL(`https://${value}`);
+  } catch (_) {
+    return null;
+  }
 }
+
+const BACKEND = parseBackend(getEnv("BACKEND_URL"));
+const UPSTREAM_TIMEOUT_MS = Number(getEnv("UPSTREAM_TIMEOUT_MS") || "25000");
+const DEBUG_PROXY = getEnv("DEBUG_PROXY") === "1";
+
+if (!BACKEND) {
+  console.warn("[proxy] BACKEND_URL is missing or invalid");
+}
+
+const BACKEND_BASE_PATH = BACKEND?.pathname && BACKEND.pathname !== "/"
+  ? BACKEND.pathname.replace(/\/$/, "")
+  : "";
 
 const HOP_BY_HOP_REQUEST_HEADERS = new Set([
   "connection",
@@ -80,14 +100,18 @@ function withTimeout(signal, timeoutMs) {
 }
 
 export default async (request) => {
-  if (!BACKEND_URL) {
-    return new Response("BACKEND_URL missing", { status: 500 });
+  if (!BACKEND) {
+    return new Response("BACKEND_URL missing or invalid", { status: 500 });
   }
 
-  const upstreamURL = new URL(request.url);
-  upstreamURL.protocol = "https:";
-  upstreamURL.hostname = BACKEND_URL;
-  upstreamURL.port = "";
+  const incomingURL = new URL(request.url);
+  const upstreamURL = new URL(incomingURL.toString());
+  upstreamURL.protocol = BACKEND.protocol || "https:";
+  upstreamURL.hostname = BACKEND.hostname;
+  upstreamURL.port = BACKEND.port;
+  if (BACKEND_BASE_PATH) {
+    upstreamURL.pathname = `${BACKEND_BASE_PATH}${incomingURL.pathname}`;
+  }
 
   const headers = stripHeaders(request.headers, HOP_BY_HOP_REQUEST_HEADERS);
 
@@ -127,11 +151,16 @@ export default async (request) => {
     });
   } catch (error) {
     const status = error?.name === "AbortError" ? 504 : 502;
-    const message = error?.name === "AbortError"
+    const baseMessage = error?.name === "AbortError"
       ? "Gateway Timeout"
       : "Bad Gateway";
 
-    return new Response(message, { status });
+    if (DEBUG_PROXY) {
+      const detail = error?.message ? `: ${error.message}` : "";
+      return new Response(`${baseMessage}${detail}`, { status });
+    }
+
+    return new Response(baseMessage, { status });
   } finally {
     timeout.clear();
   }
